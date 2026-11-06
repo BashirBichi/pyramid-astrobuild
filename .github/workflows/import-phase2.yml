@@ -23,7 +23,7 @@ jobs:
           tar -xJf /tmp/phase2.tar.xz -C /tmp/astrobuild-phase2
           python /tmp/astrobuild-phase2/apply_patch.py /tmp/astrobuild-phase2 .
           rm -rf phase2
-          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install -r requirements.txt 'pytest>=8,<10'
           python -m compileall -q app
           pytest -q
           git config user.name 'github-actions[bot]'
