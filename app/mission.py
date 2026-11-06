@@ -13,6 +13,9 @@ class MissionRequest(BaseModel):
     builders: int = Field(default=3, ge=0, le=8)
     electricians: int = Field(default=1, ge=0, le=8)
     available_power_kw: float = Field(default=48, ge=5, le=500)
+    communication_delay_min: float = Field(default=12, ge=4, le=24)
+    autonomous: bool = True
+    review_events: int = Field(default=3, ge=0, le=6)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,9 +46,19 @@ def simulate_mission(req: MissionRequest) -> dict:
         return {"ready": False, "reason": "Required specialists missing", "missing_roles": missing, "timeline": []}
     done: dict[str, tuple[float, float]] = {}
     timeline: list[dict] = []
+    # Spread hypothetical review events deterministically across three milestones.
+    gates = ("survey", "prepare", "habitat")
+    reviews = {name: 0 for name in gates}
+    for idx in range(req.review_events):
+        reviews[gates[idx % len(gates)]] += 1
+    review_total_h = 0.0
     for task in TASKS:
         efficiency = 1 + 0.55 * min(counts[task.role] - 1, 4)
-        duration = round(task.base_hours / efficiency, 2)
+        productive_h = task.base_hours / efficiency
+        # Round trip for human approval vs a *hypothetical* 72-second local review.
+        review_delay_h = reviews.get(task.id, 0) * (0.02 if req.autonomous else 2 * req.communication_delay_min / 60)
+        review_total_h += review_delay_h
+        duration = round(productive_h + review_delay_h, 2)
         power = task.power_kw  # total task draw; avoid counting scaled robot count twice
         if power > req.available_power_kw:
             return {"ready": False, "reason": f"Insufficient available power for {task.label}", "required_power_kw": power, "timeline": []}
@@ -71,7 +84,7 @@ def simulate_mission(req: MissionRequest) -> dict:
             raise RuntimeError("Could not allocate mission tasks deterministically")
         end = round(start + duration, 2)
         done[task.id] = (round(start, 2), end)
-        timeline.append({"id": task.id, "label": task.label, "role": task.role, "start_h": round(start, 2), "end_h": end, "duration_h": duration, "power_kw": power, "energy_kwh": round(power * duration, 1)})
+        timeline.append({"id": task.id, "label": task.label, "role": task.role, "start_h": round(start, 2), "end_h": end, "duration_h": duration, "power_kw": power, "energy_kwh": round(power * productive_h, 1), "review_delay_h": round(review_delay_h, 2)})
     total_h = max(item["end_h"] for item in timeline)
     return {
         "ready": True,
@@ -79,10 +92,20 @@ def simulate_mission(req: MissionRequest) -> dict:
         "duration_days": round(total_h / 24, 1),
         "energy_kwh": round(sum(item["energy_kwh"] for item in timeline), 1),
         "timeline": timeline,
+        "communications": {
+            "one_way_delay_min": req.communication_delay_min,
+            "round_trip_min": round(2 * req.communication_delay_min, 1),
+            "mode": "local_autonomy" if req.autonomous else "earth_supervised",
+            "review_events": req.review_events,
+            "review_hold_h": round(review_total_h, 2),
+            "estimated_latency_avoided_h": round(req.review_events * max(0, 2 * req.communication_delay_min / 60 - 0.02), 2) if req.autonomous else 0,
+        },
         "assumptions": [
             "Conceptual Earth analog demonstration, not a validated Mars deployment model.",
             "Task durations, robot productivity and electrical loads are illustrative.",
             "No material transport, launch costs, atmospheric, dust, communication, or weather constraints modeled.",
             "Schedule uses deterministic precedence, team exclusivity, and a shared power ceiling.",
+            "Communication-review events are illustrative; local autonomy is modeled as 0.02 hours per review, not a verified robot capability.",
+            "No simulated response should be interpreted as permission to continue unsafe physical work.",
         ],
     }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -12,10 +13,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
 from .mission import MissionRequest, simulate_mission
+from .nasa_data import NASADataClient
+from .data_api import router as nasa_router
 from .terrain import MAX_INPUT_BYTES, TerrainInputError, compare_profiles, profile_geotiff, synthetic_comparison
 
 BASE = Path(__file__).resolve().parent
-app = FastAPI(title="Pyramid AstroBuild", version="0.1.0", docs_url="/api/docs", redoc_url=None)
+@asynccontextmanager
+async def lifespan(instance: FastAPI):
+    client = NASADataClient()
+    instance.state.nasa = client
+    try:
+        yield
+    finally:
+        await client.close()
+
+
+app = FastAPI(title="Pyramid AstroBuild", version="0.2.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+app.include_router(nasa_router)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 _ANALYSES = asyncio.Semaphore(2)
 
@@ -33,7 +47,7 @@ SITES = [
 DATASETS = [
     {"id":"srtm","name":"NASA SRTM Global 1 arc-second","body":"Earth","kind":"Elevation DEM","url":"https://www.earthdata.nasa.gov/data/catalog/lpcloud-srtmgl1-003","access":"Earthdata account may be required","detail":"~30 m elevation, 60°N to 56°S. Suitable for slope and local relief analysis."},
     {"id":"nasadem","name":"NASADEM Merged DEM","body":"Earth","kind":"Elevation DEM","url":"https://search.earthdata.nasa.gov/search?q=NASADEM_HGT","access":"Earthdata account may be required","detail":"SRTM-derived global DEM with additional processing and void filling."},
-    {"id":"mola","name":"Mars Orbiter Laser Altimeter (MOLA)","body":"Mars","kind":"Elevation DEM","url":"https://astrogeology.usgs.gov/search/map/mars_global_surveyor_mola_globe","access":"Public mission catalog","detail":"NASA Mars Global Surveyor topography. Download actual numeric DEM for comparison, not shaded-relief imagery."},
+    {"id":"mola","name":"Mars Orbiter Laser Altimeter (MOLA)","body":"Mars","kind":"Elevation DEM","url":"https://pds-geosciences.wustl.edu/missions/mgs/megdr.html","access":"Public PDS DEM source","detail":"NASA Mars Global Surveyor topography. Download actual numeric DEM for comparison, not shaded-relief imagery."},
     {"id":"lola","name":"Lunar Orbiter Laser Altimeter (LOLA)","body":"Moon","kind":"Elevation DEM","url":"https://pds-geosciences.wustl.edu/missions/lro/lola.htm","access":"Public planetary archive","detail":"LRO laser altimetry for lunar elevation and terrain studies."},
     {"id":"earthdata","name":"NASA Earthdata GIS","body":"Earth","kind":"Discovery","url":"https://gis.earthdata.nasa.gov/portal/home/","access":"Public catalog","detail":"Find NASA GIS-ready datasets and map services."},
 ]
@@ -41,7 +55,7 @@ DATASETS = [
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": "0.1.0", "mode": "prototype"}
+    return {"status": "ok", "version": "0.2.0", "mode": "prototype"}
 
 
 @app.get("/api/catalog")
