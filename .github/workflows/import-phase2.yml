@@ -1,0 +1,32 @@
+name: Import tested NASA Phase 2 source
+on:
+  push:
+    branches: [feature/nasa-datasets-v02]
+    paths: ["phase2/**"]
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Assemble source archive, run tests, publish validated tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f phase2/COMPLETE || exit 0
+          cat phase2/part*.txt | base64 -d >/tmp/phase2.tar.xz
+          tar -tJf /tmp/phase2.tar.xz >/dev/null
+          tar -xJf /tmp/phase2.tar.xz -C .
+          rm -rf phase2
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m compileall -q app
+          pytest -q
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: NASA PDS DEM profiles, NASADEM discovery, autonomy scenarios'
+          git push origin HEAD:feature/nasa-datasets-v02
