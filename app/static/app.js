@@ -95,6 +95,8 @@ function selectSite(id) {
   const site = state.sites.find(item => item.id === id);
   if (!site) return;
   state.selectedSite = id;
+  const previousGranules = $('#earthdata-results');
+  if (previousGranules) previousGranules.hidden = true;
   renderSites();
   $('#site-detail').innerHTML = `
     <div class="detail-upper"><span class="eyebrow">SITE INTELLIGENCE / ${escapeHtml(site.category.toUpperCase())}</span><span class="detail-status">${escapeHtml(site.status)}</span></div>
@@ -102,7 +104,7 @@ function selectSite(id) {
     <p>${escapeHtml(site.description)}</p>
     <div class="detail-metadata"><span>${icon('pin')} ${site.lat.toFixed(2)}°, ${site.lng.toFixed(2)}°</span><span>${escapeHtml(site.tag)}</span><span>Unscored</span></div>
     <div class="research-focus"><small>RESEARCH HYPOTHESIS</small><p>${escapeHtml(site.research)}</p></div>
-    <div class="action-row"><button class="btn btn-outline" id="site-analyze">Compare with a NASA DEM ${icon('arrow')}</button></div>`;
+    <div class="action-row"><button class="btn btn-outline" id="site-analyze">Compare with a NASA DEM ${icon('arrow')}</button><button class="btn btn-outline" id="earthdata-discover">Find NASADEM tiles ${icon('database')}</button></div>`;
   $('#site-analyze').addEventListener('click', () => navigate('terrain'));
   const marker = state.markers.get(id);
   if (marker && state.map) state.map.setView([site.lat, site.lng], Math.max(5, state.map.getZoom()), {animate: true});
