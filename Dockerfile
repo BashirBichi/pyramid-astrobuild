@@ -1,9 +1,9 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8000
 WORKDIR /srv
-RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && rm -rf /var/lib/apt/lists/*
-COPY source/ ./source/
-RUN cat source/part*.b64 | base64 -d | tar -xJf - -C /srv && pip install --no-cache-dir -r requirements.txt && useradd --create-home --uid 10001 astrobuild
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home --uid 10001 astrobuild
+COPY app ./app
 USER astrobuild
-EXPOSE 10000
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1 --proxy-headers"]
+EXPOSE 8000
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers"]
