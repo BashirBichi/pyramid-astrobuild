@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
 from .mission import MissionRequest, simulate_mission
-from .nasa_data import NASADataClient
+from .analog import rank_sites
+from .nasa_data import NASADataClient, NASAUpstreamError
 from .data_api import router as nasa_router
 from .terrain import MAX_INPUT_BYTES, TerrainInputError, compare_profiles, profile_geotiff, synthetic_comparison
 
@@ -28,7 +29,7 @@ async def lifespan(instance: FastAPI):
         await client.close()
 
 
-app = FastAPI(title="Pyramid AstroBuild", version="0.2.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Pyramid AstroBuild", version="0.3.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 app.include_router(nasa_router)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 _ANALYSES = asyncio.Semaphore(2)
@@ -44,6 +45,21 @@ SITES = [
     {"id":"death-valley","name":"Death Valley","country":"United States","region":"California","lat":36.44,"lng":-116.83,"category":"Arid terrain","status":"Reference example","description":"Arid basin and ranges historically discussed as terrestrial planetary analog environments.","research":"Benchmark arid surface conditions; avoid comparing environments without matching local scale.","tag":"Reference"},
 ]
 
+SITE_ANALOG_PROFILES = {
+    "tenere": {"terrain":["dune","arid","flat"],"climate":["hyper_arid"],"geology":["sedimentary","aeolian"],"operations":["rover","dust","remote"]},
+    "danakil": {"terrain":["volcanic","basin","salt","arid"],"climate":["hyper_arid","extreme_heat"],"geology":["volcanic","evaporite"],"operations":["extreme_environment","field_robotics"]},
+    "namib": {"terrain":["dune","arid","rocky"],"climate":["hyper_arid","coastal"],"geology":["aeolian","sedimentary"],"operations":["rover","dust"]},
+    "wadi-rum": {"terrain":["rocky","sandstone","canyon","arid"],"climate":["arid"],"geology":["sedimentary"],"operations":["mobility","rock_climbing"]},
+    "teide": {"terrain":["volcanic","lava","high_elevation"],"climate":["arid"],"geology":["basaltic","volcanic"],"operations":["lava","robotics"]},
+    "atacama": {"terrain":["arid","volcanic","salt","rocky"],"climate":["hyper_arid","high_uv"],"geology":["volcanic","evaporite"],"operations":["planetary_analog","robotics"]},
+    "haughton": {"terrain":["impact","crater","rocky","polar"],"climate":["cold","dry"],"geology":["impact","sedimentary"],"operations":["impact","cold"]},
+    "death-valley": {"terrain":["arid","basin","mountain"],"climate":["hyper_arid","extreme_heat"],"geology":["sedimentary","alluvial"],"operations":["mobility","extreme_heat"]},
+}
+
+for _site in SITES:
+    _site["analog_profile"] = SITE_ANALOG_PROFILES[_site["id"]]
+
+
 DATASETS = [
     {"id":"srtm","name":"NASA SRTM Global 1 arc-second","body":"Earth","kind":"Elevation DEM","url":"https://www.earthdata.nasa.gov/data/catalog/lpcloud-srtmgl1-003","access":"Earthdata account may be required","detail":"~30 m elevation, 60°N to 56°S. Suitable for slope and local relief analysis."},
     {"id":"nasadem","name":"NASADEM Merged DEM","body":"Earth","kind":"Elevation DEM","url":"https://search.earthdata.nasa.gov/search?q=NASADEM_HGT","access":"Earthdata account may be required","detail":"SRTM-derived global DEM with additional processing and void filling."},
@@ -55,7 +71,7 @@ DATASETS = [
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": "0.2.0", "mode": "prototype"}
+    return {"status": "ok", "version": "0.3.0", "mode": "prototype"}
 
 
 @app.get("/api/catalog")
@@ -66,6 +82,34 @@ def catalog() -> dict:
 @app.post("/api/mission")
 def mission(request: MissionRequest) -> dict:
     return simulate_mission(request)
+
+
+@app.get("/api/analog/rank")
+async def analog_rank(
+    body: Annotated[str, Query(pattern=r"^(mars|moon)$")] = "mars",
+    latitude: Annotated[float, Query(ge=-80, le=80)] = 0.0,
+    longitude: Annotated[float, Query(ge=-180, le=360)] = 0.0,
+    span_deg: Annotated[float, Query(ge=4, le=20)] = 8.0,
+    candidate_id: Annotated[list[str] | None, Query(max_length=32)] = None,
+) -> dict:
+    selected = set(candidate_id) if candidate_id else None
+    unknown = sorted(selected.difference({site["id"] for site in SITES})) if selected else []
+    if unknown:
+        raise HTTPException(404, "Unknown analog candidate(s): " + ", ".join(unknown))
+    try:
+        return await rank_sites(
+            client=app.state.nasa,
+            sites=SITES,
+            body=body,
+            latitude=latitude,
+            longitude=longitude,
+            span_deg=span_deg,
+            candidate_ids=selected,
+        )
+    except NASAUpstreamError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except (ValueError, TerrainInputError) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/demo-comparison")
